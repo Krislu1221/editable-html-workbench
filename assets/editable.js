@@ -160,6 +160,7 @@
         st: el.getAttribute("data-eid-st") || "",
         txt: el.getAttribute("data-eid-text") || "",
         free,
+        ph: el.getAttribute("data-eid-ph") || "",
         parentPath: free && op ? op : (el.parentElement ? parentPath(el.parentElement) : ""),
         nextId: free && on ? on
           : (el.nextElementSibling && el.nextElementSibling.dataset ? (el.nextElementSibling.dataset.eid || "") : ""),
@@ -177,6 +178,14 @@
       if (s[id].txt) el.setAttribute("data-eid-text", s[id].txt);
       if (s[id].free) {
         el.setAttribute("data-free", s[id].free);
+        if (s[id].ph) el.setAttribute("data-eid-ph", s[id].ph);
+        if (s[id].parentPath) el.setAttribute("data-eid-parent", s[id].parentPath);
+        if (s[id].nextId) el.setAttribute("data-eid-next", s[id].nextId);
+        // 重做/恢复成自由定位：元素要真的回到 .free-layer（否则只挂属性、人还在流里 → 重做看不出变化），
+        // 占位块也得跟着回来，不然版面会重排。
+        const layer = freeLayer();
+        if (layer && el.parentElement !== layer) layer.appendChild(el);
+        ensurePlaceholder(el);
       } else {
         // 从自由定位回到栅格：放回原父节点的原位置
         el.removeAttribute("data-free");
@@ -192,6 +201,7 @@
 
   /* 把元素从 .free-layer 放回指定父节点的指定位置 */
   function backToGrid(el, pp, nid) {
+    removePlaceholder(el.dataset.eid);
     const s = slide();
     const target = nodeByPath(pp) || (s && s.querySelector(".slide-body")) || s;
     if (!target) return;
@@ -371,6 +381,60 @@
 
   /* ── 自由定位层 ──────────────────────────────────── */
 
+  /* 【版面占位】
+     把元素搬进 .free-layer 会让它脱离文档流 → 兄弟元素立刻上移/下移（“一拖全页重排”）。
+     修法：搬走前先在它原来的位置插一个**隐形占位块**，同等尺寸、同样 margins，
+     把那块版面空间钉死；兄弟元素因此纹丝不动。
+     占位块是真布局的一部分，会随文件保存（否则重新打开又会重排），
+     并在「回到栅格」/撤销时被清掉。尺寸存在元素自己的 data-eid-ph 上，
+     好处是撤销重做（元素重新变回自由定位）时能原地重建。 */
+  function phSize(el) {
+    const v = (el.getAttribute("data-eid-ph") || "").split(",");
+    return { w: parseFloat(v[0]) || 0, h: parseFloat(v[1]) || 0 };
+  }
+
+  function findPh(eid) { return $(`[data-ph-for="${eid}"]`); }
+
+  /* 在元素当前位置插占位块（元素已经搬走时用 data-eid-parent/next 重建） */
+  function ensurePlaceholder(el) {
+    const eid = el.dataset.eid;
+    if (!eid) return;
+    if (findPh(eid)) return;
+    const { w, h } = phSize(el);
+    if (!w || !h) return;
+    const ph = document.createElement("div");
+    ph.setAttribute("data-ph-for", eid);
+    /* 关键：把元素原来的布局类原样拷给占位块。
+       否则在栅格/伸缩布局里，占位块没有 .span-N / flex 类 → 会被自动排到另一个格子，
+       反而把别人挤走（那正是我们要避免的事）。视觉类一并拷过来也无所谓——它是 visibility:hidden。 */
+    const baseCls = el.getAttribute("data-eid-base-cls");
+    if (baseCls) ph.className = baseCls;
+    // visibility:hidden 保留版面空间；pointer-events:none 保证点不到它
+    ph.style.cssText = "margin:0;padding:0;border:0;background:none;box-sizing:border-box;" +
+      "visibility:hidden;pointer-events:none;width:" + w + "px;height:" + h + "px";
+
+    const inLayer = el.parentElement && el.parentElement.classList.contains("free-layer");
+    let parent, ref = null;
+    if (inLayer) {
+      const pp = el.getAttribute("data-eid-parent");
+      parent = (pp ? nodeByPath(pp) : null) || slide();
+      const nid = el.getAttribute("data-eid-next");
+      ref = nid ? $(`[data-eid="${nid}"]`) : null;
+    } else {
+      parent = el.parentElement;   // 元素还在原位：直接插在它前面
+      ref = el;
+    }
+    if (!parent) return;
+    if (ref && ref.parentElement === parent) parent.insertBefore(ph, ref);
+    else parent.appendChild(ph);
+  }
+
+  function removePlaceholder(eid) {
+    if (!eid) return;
+    const ph = findPh(eid);
+    if (ph) ph.remove();
+  }
+
   function freeLayer() {
     let l = $(".free-layer");
     if (!l) {
@@ -392,6 +456,14 @@
     el.setAttribute("data-eid-parent", el.parentElement ? parentPath(el.parentElement) : "");
     el.setAttribute("data-eid-next",
       el.nextElementSibling && el.nextElementSibling.dataset ? (el.nextElementSibling.dataset.eid || "") : "");
+    /* 先把占位尺寸记下来（含 margins，否则兄弟还是会因为 margin 变化而挪 2-3px），
+       再在它前面插一个隐形占位块钉住版面，然后才搬进自由定位层。 */
+    const cs = getComputedStyle(el);
+    const mw = (parseFloat(cs.marginLeft) || 0) + (parseFloat(cs.marginRight) || 0);
+    const mh = (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+    el.setAttribute("data-eid-ph", (r.w + mw) + "," + (r.h + mh));
+    ensurePlaceholder(el);
+
     const layer = freeLayer();
     layer.appendChild(el);
     el.setAttribute("data-free", "1");
@@ -1015,7 +1087,7 @@
       if (t !== null && t !== "") setTextPreserving(el, t);
       ["data-eid", "data-eid-cls", "data-eid-st", "data-eid-base-cls", "data-eid-text",
         "data-eid-parent", "data-eid-next", "data-free", "data-free-parent", "data-sel",
-        "draggable", "data-text-dirty", "contenteditable"].forEach((a) => el.removeAttribute(a));
+        "draggable", "data-text-dirty", "contenteditable", "data-eid-ph"].forEach((a) => el.removeAttribute(a));
       if (el.hasAttribute("data-ed-layer")) el.removeAttribute("data-ed-layer");
     });
     /* 【不要删 data-drag】
@@ -1260,6 +1332,7 @@
       el.setAttribute("data-eid-st", "");
       el.removeAttribute("data-eid-parent");
       el.removeAttribute("data-eid-next");
+      el.removeAttribute("data-eid-ph");
       applyProps(el);
       backToGrid(el, pp, nid);
       markDirty(); refresh(); updateSelectionBox();
