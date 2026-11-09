@@ -1,0 +1,8 @@
+node_modules/
+.DS_Store
+_verify/*.png
+_verify/.cache/
+*.log
+.idea/
+.vscode/
+demo/_drafts/

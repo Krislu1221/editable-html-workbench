@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Editable HTML · 新范式</title>
+<link rel="stylesheet" href="../assets/tokens.css">
+<link rel="stylesheet" href="../assets/layout.css">
+</head>
+<body>
+<section class="slide">
+  <header class="slide-head">
+    <p class="eyebrow">新范式</p>
+    <h2 class="slide-title">三层分离，<span class="hl">各管各的</span></h2>
+    <p class="slide-sub">下面是这套范式下的真实产物——本页所有东西都可以直接改：文字、颜色、位置、大小、前后顺序。</p>
+  </header>
+
+  <div class="slide-body">
+    <!-- 交互演示：Tab 切换 -->
+    <div class="span-12" data-drag>
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="true" data-tab="a">色板</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="b">字阶</button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="c">间距</button>
+      </div>
+      <div class="panel" data-panel="a" style="padding-top:var(--sp-3)">
+        <div class="grid">
+          <div class="kpi span-3"><div class="v">--accent</div><div class="k">主题色　改它，全站跟着变</div></div>
+          <div class="kpi blue span-3"><div class="v">--c-blue</div><div class="k">辅色一</div></div>
+          <div class="kpi teal span-3"><div class="v">--c-teal</div><div class="k">辅色二</div></div>
+          <div class="kpi amber span-3"><div class="v">--c-amber</div><div class="k">辅色三</div></div>
+        </div>
+      </div>
+      <div class="panel" data-panel="b" hidden style="padding-top:var(--sp-3)">
+        <div class="blk span-12">
+          <h4>字阶</h4>
+          <p><strong>--fs-1</strong> 11px 注释　<strong>--fs-2</strong> 13px 正文　<strong>--fs-3</strong> 16px 小标题　<strong>--fs-5</strong> 28px 页标题　<strong>--fs-7</strong> 56px 封面标题</p>
+          <p class="note">只改 --fs-base 一个值，整套字号等比缩放。</p>
+        </div>
+      </div>
+      <div class="panel" data-panel="c" hidden style="padding-top:var(--sp-3)">
+        <div class="blk span-12">
+          <h4>间距</h4>
+          <p>--sp-1 4px　--sp-2 8px　--sp-3 13px　--sp-4 16px　--sp-5 24px　--sp-6 32px　--sp-7 48px　--sp-8 64px</p>
+          <p class="note">密度档位 compact / airy 只改间距变量，不碰组件规则。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 栅格位置演示 -->
+    <div class="grid" style="margin-top:var(--sp-5)">
+      <div class="blk accent span-4" data-drag><h4>span-4</h4><p>拖我 —— 会自动脱离栅格，变成自由定位。</p></div>
+      <div class="blk accent-blue span-4" data-drag><h4>span-4</h4><p>拖角上的手柄，可以放大缩小。</p></div>
+      <div class="blk accent-teal span-4" data-drag><h4>span-4</h4><p>用右侧「层级」按钮，可以调前后顺序。</p></div>
+    </div>
+  </div>
+
+  <footer class="slide-foot">
+    <span class="cap">本页可交互：点 Tab 切换面板；进编辑模式后可直接拖动改版式</span>
+    <span class="pgnum"><b>03</b> / 03</span>
+  </footer>
+</section>
+<script>
+document.querySelectorAll('.tab').forEach(function(t){
+  t.addEventListener('click', function(){
+    document.querySelectorAll('.tab').forEach(function(x){ x.setAttribute('aria-selected','false'); });
+    t.setAttribute('aria-selected','true');
+    document.querySelectorAll('.panel').forEach(function(p){ p.hidden = p.dataset.panel !== t.dataset.tab; });
+  });
+});
+</script>
+<script src="../assets/editable.js"></script>
+</body>
+</html>

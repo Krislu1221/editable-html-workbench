@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Editable HTML · 工作台</title>
+<style>
+  /* 工作台外壳自己的样式，与项目无关（所以不依赖项目的 tokens.css） */
+  :root{
+    --canvas:#eef0ef; --paper:#fff; --ink:#14201a; --ink-2:#3d4d45; --ink-3:#78857d;
+    --line:#dfe4e0; --paper-2:#f5f8f6; --accent:#1f7a3d; --accent-deep:#12502a; --accent-soft:#e6f4ea;
+    --c-blue:#2166a8; --r-sm:3px; --r-md:6px;
+    --font-sans:"PingFang SC","Microsoft YaHei","Noto Sans SC",-apple-system,"Segoe UI",sans-serif;
+    --font-mono:ui-monospace,Consolas,Menlo,monospace;
+  }
+  html,body{margin:0;height:100%;background:var(--canvas);font-family:var(--font-sans);color:var(--ink);font-size:13px}
+  .app{height:100%;display:grid;grid-template-columns:260px 1fr;grid-template-rows:auto 1fr}
+  .top{grid-column:1/-1;display:flex;align-items:center;gap:8px;padding:9px 14px;
+    background:var(--paper);border-bottom:1px solid var(--line)}
+  .top .t{font-weight:800;font-size:15px}
+  .top .sp{flex:1}
+  .top .path{font-size:11px;color:var(--ink-3);font-family:var(--font-mono);
+    background:var(--paper-2);padding:4px 9px;border-radius:var(--r-sm);max-width:34vw;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .top button{font:inherit;font-size:12px;font-weight:700;cursor:pointer;
+    border:1px solid var(--line);background:var(--paper);color:var(--ink);padding:6px 11px;border-radius:var(--r-md)}
+  .top button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+  .top button:disabled{opacity:.4;cursor:default}
+  .top button.edit{background:var(--accent);border-color:var(--accent);color:#fff}
+  .top button.save{background:var(--c-blue);border-color:var(--c-blue);color:#fff}
+  /* 缩放控件：只影响画布里的页面，不影响左右面板 */
+  .zoom{display:flex;align-items:center;gap:0;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden}
+  .zoom button{border:0;border-radius:0;padding:6px 9px;font-weight:700}
+  .zoom button + button{border-left:1px solid var(--line)}
+  .zoom .pct{min-width:52px;text-align:center;font-size:11px;color:var(--ink-2);
+    font-variant-numeric:tabular-nums;padding:0 4px}
+  .side{background:var(--paper);border-right:1px solid var(--line);overflow-y:auto;padding:10px}
+  .side h3{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);
+    margin:0 0 8px;font-weight:700}
+  .side .item{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:var(--r-sm);
+    font-size:12px;cursor:pointer;color:var(--ink-2)}
+  .side .item:hover{background:var(--paper-2)}
+  .side .item.active{background:var(--accent-soft);color:var(--accent-deep);font-weight:700}
+  .side .item .dot{width:6px;height:6px;border-radius:999px;background:var(--line);flex:none}
+  .side .item.active .dot{background:var(--accent)}
+  .side .item .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .side .item .no{font-size:10px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+  .side .dir{font-size:10px;color:var(--ink-3);margin:10px 0 4px;letter-spacing:.04em;text-transform:uppercase}
+
+  /* 画布：预览态自动等比缩放到可用区域；编辑态铺满，缩放交给编辑器自己 */
+  .stage{overflow:auto;position:relative;padding:14px;scrollbar-gutter:stable}
+  .frame{position:relative;margin:0 auto}
+  #f{border:0;background:var(--paper);display:block;transform-origin:top left;
+    box-shadow:0 10px 34px rgba(0,0,0,.12);border-radius:var(--r-sm)}
+  body[data-editing] .stage{padding:0;overflow:hidden}
+  body[data-editing] .frame{width:100%!important;height:calc(100vh - 52px)!important;margin:0}
+  body[data-editing] #f{width:100%!important;height:100%!important;transform:none!important;
+    box-shadow:none;border-radius:0;background:var(--canvas)}
+
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:99;
+    background:var(--ink);color:var(--paper);padding:9px 18px;border-radius:var(--r-md);
+    font-size:12px;opacity:0;transition:opacity .25s;pointer-events:none}
+  .toast.on{opacity:1}
+  .tip{font-size:11px;color:var(--ink-3)}
+  .empty{padding:22px 10px;color:var(--ink-3);font-size:12px;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <span class="t">Editable HTML · 工作台</span>
+    <span class="path" id="root" title="">—</span>
+    <span class="path" id="cur">—</span>
+    <span class="sp"></span>
+    <span class="tip" id="dirtyTip"></span>
+    <div class="zoom" title="缩放画布页面（Ctrl+滚轮 也可）">
+      <button id="zoomOut" title="缩小">−</button>
+      <span class="pct" id="zoomPct">—</span>
+      <button id="zoomIn" title="放大">+</button>
+      <button id="zoomFit" title="适应窗口">适应</button>
+    </div>
+    <button id="openDoc">打开文档…</button>
+    <button id="prev">←</button>
+    <button id="next">→</button>
+    <button id="edit" class="edit">进入编辑</button>
+    <button id="save" class="save" disabled>保存到原文件</button>
+  </div>
+
+  <aside class="side">
+    <h3>页面</h3>
+    <div id="files"></div>
+  </aside>
+
+  <main class="stage" id="stage"><div class="frame" id="frame"><iframe id="f" title="canvas"></iframe></div></main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+var f = document.getElementById('f');
+var frame = document.getElementById('frame');
+var stage = document.getElementById('stage');
+var cur = document.getElementById('cur');
+var rootEl = document.getElementById('root');
+var filesEl = document.getElementById('files');
+var editBtn = document.getElementById('edit');
+var saveBtn = document.getElementById('save');
+var dirtyTip = document.getElementById('dirtyTip');
+var toastEl = document.getElementById('toast');
+var zoomPct = document.getElementById('zoomPct');
+var editing = false, dirty = false, list = [], idx = 0;
+var previewZoom = 1;    // 预览态的额外倍率（1 = 适应窗口）
+var editorScale = 1;    // 编辑态时编辑器报上来的实际缩放比
+
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('on');
+  clearTimeout(toastEl._t);
+  toastEl._t = setTimeout(function () { toastEl.classList.remove('on'); }, 2600);
+}
+
+/* 左侧栏：项目里所有 HTML（排除工作台外壳自己）
+   —— 用绝对路径，因为 studio.html 是从 /__wb/ 提供的，相对路径会解析到包目录 */
+function htmlFiles() {
+  return list.filter(function (p) {
+    return /\.html?$/i.test(p) && !/^_/.test(p.split('/').pop()) && p !== 'studio.html';
+  }).sort(function (a, b) {
+    if (a === 'index.html') return -1;
+    if (b === 'index.html') return 1;
+    return a.localeCompare(b);
+  });
+}
+
+function renderList() {
+  var files = htmlFiles();
+  filesEl.innerHTML = '';
+  if (!files.length) {
+    filesEl.innerHTML = '<div class="empty">这个项目里没有可编辑的 HTML 页面。<br>换一个项目目录重新启动，' +
+      '或把 <code>editable-studio.cmd</code> 指到别的文件夹。</div>';
+    return;
+  }
+  var lastDir = null;
+  files.forEach(function (p, i) {
+    var d = p.indexOf('/') >= 0 ? p.slice(0, p.lastIndexOf('/')) : '';
+    if (d !== lastDir && d) {
+      var h = document.createElement('div');
+      h.className = 'dir';
+      h.textContent = d;
+      filesEl.appendChild(h);
+      lastDir = d;
+    }
+    var el = document.createElement('div');
+    el.className = 'item' + (i === idx ? ' active' : '');
+    el.innerHTML = '<span class="dot"></span><span class="nm"></span><span class="no">' + (i + 1) + '</span>';
+    el.querySelector('.nm').textContent = p.split('/').pop();
+    el.title = p;
+    el.onclick = function () { idx = i; load(); };
+    filesEl.appendChild(el);
+  });
+}
+
+/* ── 预览态：把页面等比缩放到可用区域（原来写死 1280×720，大页面直接被裁） ──
+   注意：不能直接量「当前 iframe 里的宽度」——iframe 默认只有 300px 宽，
+   流式页面（width:100%）会被量成 300，然后越缩越小（反馈环）。
+   正确做法：先把 iframe 铺到可用宽度，让页面按真实宽度排版，再量内容尺寸。 */
+function fitPreview() {
+  if (editing) return;
+  var d = null;
+  try { d = f.contentDocument; } catch (e) { d = null; }
+  if (!d || !d.documentElement) { zoomPct.textContent = '—'; return; }
+
+  var availW = Math.max(200, stage.clientWidth - 28);
+  var availH = Math.max(160, stage.clientHeight - 28);
+
+  // ① 先铺满可用区域量一次（流式页面此时会按真实宽度排版）
+  f.style.transform = 'none';
+  f.style.width = availW + 'px';
+  f.style.height = availH + 'px';
+
+  var de = d.documentElement, bd = d.body || de;
+  var natW = Math.max(de.scrollWidth || 0, bd.scrollWidth || 0, availW);
+  var natH = Math.max(de.scrollHeight || 0, bd.scrollHeight || 0, 160);
+
+  // ② 缩放策略：
+  //    · 宽度永远适配（否则横向看不全）
+  //    · 只有「单屏 / 横向」页面（高宽比 ≤ 1.3，比如 1920×1080 的幻灯片）才连高度一起适配
+  //    · 长文档（比如 2151×29862）按宽度适配、纵向滚动，否则会缩成 3% 完全没法读
+  var base = Math.min(1, availW / natW);
+  var ar = natW > 0 ? natH / natW : 1;
+  if (ar <= 1.3) base = Math.min(base, availH / natH);
+
+  var k = Math.max(0.02, Math.min(6, base * previewZoom));
+
+  f.style.width = natW + 'px';
+  f.style.height = natH + 'px';
+  f.style.transform = 'scale(' + k + ')';
+  frame.style.width = Math.round(natW * k) + 'px';
+  frame.style.height = Math.round(natH * k) + 'px';
+  zoomPct.textContent = Math.round(k * 100) + '%';
+  zoomPct.title = '页面 ' + Math.round(natW) + '×' + Math.round(natH) + 'px，画布 ' +
+    Math.round(natW * k) + '×' + Math.round(natH * k) + 'px';
+}
+
+function load() {
+  var files = htmlFiles();
+  if (!files.length) { cur.textContent = '—'; f.removeAttribute('src'); renderList(); return; }
+  idx = Math.max(0, Math.min(idx, files.length - 1));
+  var p = files[idx];
+  cur.textContent = p;
+  dirty = false; saveBtn.disabled = true; dirtyTip.textContent = '';
+  f.src = '/' + p + (editing ? '?edit=1' : '');
+  renderList();
+  document.title = 'Editable HTML · ' + p.split('/').pop();
+}
+
+f.addEventListener('load', function () {
+  if (editing) return;      // 编辑态由编辑器自己 fitCanvas
+  fitPreview();
+  attachFrameWheel();
+});
+
+/* 滚轮 / 触控板捏合（Chrome 里捏合会以 ctrlKey=true 的 wheel 事件出现）
+   按滚轮力度换算倍率，捏合的手感才连续；固定 1.1 倍会显得很钝。 */
+function wheelFactor(e) {
+  var d = e.deltaY * (e.deltaMode === 1 ? 16 : 1);
+  return Math.max(0.8, Math.min(1.25, Math.pow(1.0015, -d)));
+}
+
+/* 滚轮事件发生在 iframe 内部，父窗口的监听收不到，所以要往 iframe 文档里也挂一份 */
+function attachFrameWheel() {
+  var d = null;
+  try { d = f.contentDocument; } catch (e) { d = null; }
+  if (!d || d.__edZoomWheel) return;
+  d.__edZoomWheel = true;
+  d.addEventListener('wheel', function (e) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    zoomBy(wheelFactor(e));
+  }, { passive: false });
+}
+
+/* ── 缩放：预览态缩 iframe，编辑态把倍率发给编辑器（页面缩放不影响左右面板） ── */
+function zoomBy(factor) {
+  if (editing) {
+    f.contentWindow.postMessage({ type: 'zoomBy', value: factor }, '*');
+    return;
+  }
+  previewZoom = Math.max(0.15, Math.min(6, previewZoom * factor));
+  fitPreview();
+}
+function zoomFit() {
+  if (editing) { f.contentWindow.postMessage({ type: 'zoomFit' }, '*'); return; }
+  previewZoom = 1;
+  fitPreview();
+}
+document.getElementById('zoomIn').onclick = function () { zoomBy(1.2); };
+document.getElementById('zoomOut').onclick = function () { zoomBy(1 / 1.2); };
+document.getElementById('zoomFit').onclick = function () { zoomFit(); };
+
+/* Ctrl + 滚轮 / 触控板捏合：只缩放画布，不动浏览器缩放 */
+stage.addEventListener('wheel', function (e) {
+  if (!e.ctrlKey && !e.metaKey) return;
+  e.preventDefault();
+  zoomBy(wheelFactor(e));
+}, { passive: false });
+
+editBtn.onclick = function () {
+  editing = !editing;
+  document.body.setAttribute('data-editing', editing ? '1' : '0');
+  editBtn.textContent = editing ? '退出编辑' : '进入编辑';
+  editBtn.classList.toggle('edit', !editing);
+  if (!editing) { f.style.transform = ''; }
+  load();
+};
+saveBtn.onclick = function () { doSave(); };
+document.getElementById('prev').onclick = function () {
+  var n = htmlFiles().length; if (!n) return;
+  idx = (idx - 1 + n) % n; load();
+};
+document.getElementById('next').onclick = function () {
+  var n = htmlFiles().length; if (!n) return;
+  idx = (idx + 1) % n; load();
+};
+
+/* 打开文档：弹系统文件对话框（服务端弹），选中后把工作根切到它所在目录并重载
+   首次打开要起一个 PowerShell 进程、对话框还要初始化 shell，可能要等几秒，
+   所以这里先给「选择中…」的反馈，并禁用按钮避免连点堆出一串窗口。 */
+document.getElementById('openDoc').onclick = function () {
+  var btn = this;
+  if (btn.disabled) return;
+  btn.disabled = true;
+  var old = btn.textContent;
+  btn.textContent = '选择中…';
+  toast('正在打开文件对话框，首次可能等几秒…');
+
+  var done = function () { btn.disabled = false; btn.textContent = old; };
+
+  fetch('/__pick').then(function (r) { return r.json(); }).then(function (p) {
+    if (!p.ok) {
+      if (p.busy) toast('已经有一个文件对话框开着，请先把它关掉');
+      else if (p.canceled) toast('已取消');
+      else toast('选择失败：' + (p.error || '未知错误'));
+      done();
+      return null;
+    }
+    return fetch('/__open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: p.path }),
+    }).then(function (r) { return r.json(); }).then(function (o) {
+      if (!o.ok) { toast('打不开：' + (o.error || '未知错误')); done(); return; }
+      location.reload();
+    });
+  }).catch(function (e) { toast('打开失败：' + e.message); done(); });
+};
+
+function doSave() {
+  var w = f.contentWindow;
+  var api = w && w.__editableAPI;
+  if (!api) { toast('当前不在编辑模式'); return; }
+  api.save();
+}
+
+window.addEventListener('message', function (e) {
+  var m = e.data || {};
+  if (m.type === 'dirty') { dirty = !!m.value; saveBtn.disabled = !dirty; dirtyTip.textContent = dirty ? '● 有未保存改动' : ''; }
+  if (m.type === 'saved') { dirty = false; saveBtn.disabled = true; dirtyTip.textContent = ''; toast('已保存到 ' + (m.value && m.value.path)); }
+  if (m.type === 'exit') { if (editing) editBtn.click(); }
+  /* 编辑器报上来的实际缩放比 */
+  if (m.type === 'scale') {
+    editorScale = m.value;
+    if (editing) zoomPct.textContent = Math.round(editorScale * 100) + '%';
+  }
+  if (m.type === 'ready') { /* 编辑器就绪 */ }
+});
+
+document.addEventListener('keydown', function (e) {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (editing) doSave(); return; }
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+  if (e.key === 'ArrowRight') document.getElementById('next').click();
+  if (e.key === 'ArrowLeft') document.getElementById('prev').click();
+  if (e.key === 'Escape' && editing) editBtn.click();
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key === '=' || e.key === '+') { e.preventDefault(); zoomBy(1.2); }
+    if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomBy(1 / 1.2); }
+    if (e.key === '0') { e.preventDefault(); zoomFit(); }
+  }
+});
+
+window.addEventListener('resize', function () {
+  if (!editing) fitPreview();
+});
+
+fetch('/__list').then(function (r) { return r.json(); }).then(function (j) {
+  list = j.files || [];
+  if (j.root) { rootEl.textContent = j.root; rootEl.title = j.root; }
+  if (j.open) {
+    var arr = htmlFiles();
+    var at = arr.indexOf(j.open);
+    if (at >= 0) idx = at;
+  }
+  load();
+}).catch(function () {
+  toast('无法读取文件列表（需要通过工作台服务打开）');
+});
+</script>
+</body>
+</html>

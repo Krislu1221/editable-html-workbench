@@ -1,0 +1,81 @@
+/* ============================================================
+   tokens.css — 设计令牌（唯一样式真源）
+   ------------------------------------------------------------
+   改风格 = 只改这一个文件。全部颜色/字阶/间距/圆角/线宽在此定义。
+   硬规则：任何其他 CSS 文件里不得出现字面色值或裸 px 字号。
+   ============================================================ */
+
+:root {
+  /* —— 色板：中性三档 —— */
+  --ink:    #10201a;   /* 主文字 */
+  --ink-2:  #3d4d45;   /* 次级文字 */
+  --ink-3:  #6d7b73;   /* 弱化文字 / 注释 */
+  --line:   #dde3de;   /* 分隔线 */
+  --line-2: #eef2ef;   /* 浅分隔线 */
+  --paper:  #ffffff;   /* 页面底 */
+  --paper-2:#f4f8f5;   /* 卡片底 */
+  --canvas:#e7ebe8;   /* 画布底（演示用） */
+
+  /* —— 色板：主题色 —— */
+  --accent:      #1f7a3d;
+  --accent-deep: #12502a;
+  --accent-soft: #e6f4ea;
+  --c-blue: #2166a8;
+  --c-amber:#b06a12;
+  --c-teal: #0f7c86;
+  --c-red:  #b2372c;
+
+  /* —— 辅助色浅底 / 强调底上的文字（布局文件里不得再写字面色值） —— */
+  --c-blue-soft:  #e7eff7;
+  --c-amber-soft: #f7efe2;
+  --on-accent:    #ffffff;
+
+  /* —— 字阶（rem；改 --fs-base 整体缩放） —— */
+  --fs-base: 16px;
+  --fs-1: 11px;   /* eyebrow / 注释 / 页脚 */
+  --fs-2: 13px;   /* 正文 */
+  --fs-3: 16px;   /* 小标题 */
+  --fs-4: 20px;   /* 副标题 */
+  --fs-5: 28px;   /* 页面标题 */
+  --fs-6: 40px;   /* KPI 数值 */
+  --fs-7: 56px;   /* 封面主标题 */
+
+  --lh-tight: 1.26;
+  --lh-body:  1.6;
+
+  /* —— 间距阶（8 的倍数） —— */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 13px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --sp-8: 64px;
+
+  /* —— 形状 —— */
+  --r-sm: 3px;
+  --r-md: 6px;
+  --r-lg: 12px;
+  --radius: var(--r-sm);
+
+  /* —— 栅格 —— */
+  --cols: 12;
+  --gutter: 20px;
+  --pad-x: 84px;
+  --pad-y: 40px;
+
+  /* —— 字体 —— */
+  /* 跨平台字体栈：macOS(PingFang) / Windows(YaHei) / 通用(Noto Sans SC) */
+  --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Source Han Sans SC",
+                "Hiragino Sans GB", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* —— 动效 —— */
+  --ease: cubic-bezier(.2, .7, .2, 1);
+  --dur: .28s;
+}
+
+/* 密度：compact 收紧间距，airy 放开。只改这里，不动组件规则 */
+:root[data-density="compact"] { --sp-4: 12px; --sp-5: 18px; --sp-6: 24px; --gutter: 14px; }
+:root[data-density="airy"]    { --sp-4: 22px; --sp-5: 30px; --sp-6: 42px; --gutter: 28px; }

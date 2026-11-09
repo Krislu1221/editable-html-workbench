@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8">
+<title>Editable HTML · 问题诊断</title>
+<link rel="stylesheet" href="../assets/tokens.css">
+<link rel="stylesheet" href="../assets/layout.css">
+
+</head>
+<body>
+<section class="slide">
+  <header class="slide-head">
+    <p class="eyebrow">问题诊断</p>
+    <h2 class="slide-title">不是编辑器不好用，<span class="hl">是产出的结构不对</span></h2>
+    <p class="slide-sub">旧范式把视觉直接写死在标记里，人要改一处，得先读懂整页 CSS 才能下手。</p>
+  </header>
+
+  <div class="slide-body">
+    <div class="grid">
+      
+      <div class="blk accent-red span-4">
+        <h4>视觉驱动型</h4>
+        <p>绝对定位撑版面，元素靠 <strong>top/left</strong> 硬掰。挪一个卡片要同时改 4 个数值，还可能压到邻居。</p>
+        <p class="note">深嵌套 · 兄弟层级无意义</p>
+      </div><div class="blk accent-amber span-4">
+        <h4>样式散落</h4>
+        <p>色值、字号、间距不归一处，一屏 12 个 <strong>#hex</strong> 和 7 种字号并存。改一个主色要找 20 处。</p>
+        <p class="note">无 token · 无单一真源</p>
+      </div>
+      <div class="blk accent-blue span-4">
+        <h4>体积失控</h4>
+        <p>base64 字体与图片内嵌，单页动辄 <strong>5–7MB</strong>，打开卡、git 冲突、发给同事是灾难。</p>
+        <p class="note">不可 diff · 不可增量维护</p>
+      </div>
+    </div>
+
+    <div class="grid" style="margin-top:var(--sp-5)">
+      <div class="span-8">
+        <table class="tbl">
+          <thead>
+            <tr><th>维度</th><th>旧范式</th><th>Editable HTML</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>改一个色值</td><td>全局搜 20 处</td><td class="num">改 1 个变量</td></tr>
+            <tr><td>挪一个元素</td><td>调 4 个像素值</td><td class="num">拖一下</td></tr>
+            <tr><td>看懂整页</td><td>读 400 行 CSS</td><td class="num">读 40 行 tokens</td></tr>
+            <tr><td>交付体积</td><td>5–7 MB</td><td class="num">&lt; 100 KB</td></tr>
+            <tr><td>改完存哪</td><td>另存为新文件</td><td class="num">写回原文件</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="span-4">
+        <div class="blk accent span-12">
+          <h4>一句话</h4>
+          <p>把「设计决策」和「布局实现」分开。<strong>设计决策</strong>在 tokens，<strong>布局</strong>在 class，<strong>内容</strong>在标记里。三者各自独立，才谈得上编辑。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="slide-foot">
+    <span class="cap">Editable HTML 模式 · 设计原则</span>
+    <span class="pgnum"><b>02</b> / 03</span>
+  </footer>
+</section>
+<script src="../assets/editable.js"></script>
+
+
+</body></html>
