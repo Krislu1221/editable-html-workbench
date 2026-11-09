@@ -37,6 +37,8 @@
   /* ── 基础 ─────────────────────────────────────────── */
 
   const API_PATH = window.__EDIT_SAVE__ || "/__save";
+  /* 接口前缀：通常就是空（服务挂在根上），留出可被反向代理改路径的余地 */
+  const API_BASE = String(API_PATH).replace(/\/__save$/, "");
   const FILE = window.__EDIT_FILE__ || location.pathname.replace(/^.*\/demos\//, "");
   /* 被工作台用 iframe 嵌入时，外壳已经提供了「退出编辑 / 撤销 / 保存」按钮，
      页面内的 HUD 就是重复的（还会盖住画布），所以内嵌时隐藏。 */
@@ -48,6 +50,7 @@
     redo: [],
     dirty: false,
     scale: 1,
+    frozen: false,
     /* 用户缩放倍率：1 = 适应窗口。只缩放画布页面本身，不影响左右面板。 */
     userZoom: 1,
   };
@@ -160,7 +163,6 @@
         st: el.getAttribute("data-eid-st") || "",
         txt: el.getAttribute("data-eid-text") || "",
         free,
-        ph: el.getAttribute("data-eid-ph") || "",
         parentPath: free && op ? op : (el.parentElement ? parentPath(el.parentElement) : ""),
         nextId: free && on ? on
           : (el.nextElementSibling && el.nextElementSibling.dataset ? (el.nextElementSibling.dataset.eid || "") : ""),
@@ -178,14 +180,11 @@
       if (s[id].txt) el.setAttribute("data-eid-text", s[id].txt);
       if (s[id].free) {
         el.setAttribute("data-free", s[id].free);
-        if (s[id].ph) el.setAttribute("data-eid-ph", s[id].ph);
         if (s[id].parentPath) el.setAttribute("data-eid-parent", s[id].parentPath);
         if (s[id].nextId) el.setAttribute("data-eid-next", s[id].nextId);
-        // 重做/恢复成自由定位：元素要真的回到 .free-layer（否则只挂属性、人还在流里 → 重做看不出变化），
-        // 占位块也得跟着回来，不然版面会重排。
+        // 重做/恢复成自由定位：元素要真的回到 .free-layer（否则只挂属性、人还在流里 → 重做看不出变化）
         const layer = freeLayer();
         if (layer && el.parentElement !== layer) layer.appendChild(el);
-        ensurePlaceholder(el);
       } else {
         // 从自由定位回到栅格：放回原父节点的原位置
         el.removeAttribute("data-free");
@@ -201,7 +200,6 @@
 
   /* 把元素从 .free-layer 放回指定父节点的指定位置 */
   function backToGrid(el, pp, nid) {
-    removePlaceholder(el.dataset.eid);
     const s = slide();
     const target = nodeByPath(pp) || (s && s.querySelector(".slide-body")) || s;
     if (!target) return;
@@ -379,60 +377,154 @@
     return rectIn(el);
   }
 
-  /* ── 自由定位层 ──────────────────────────────────── */
+  /* ── 画布锁定（PPT 式编辑）──────────────────────────
+     目标语义：像改 PPT 一样改 HTML。
+     · 元素之间没有「反亲和性」：拖一个，其他绝不跟着挪
+     · 允许重叠 / 覆盖
+     · 不靠占位块，原位置不留死区（拖走就空着，跟 PPT 一样）
 
-  /* 【版面占位】
-     把元素搬进 .free-layer 会让它脱离文档流 → 兄弟元素立刻上移/下移（“一拖全页重排”）。
-     修法：搬走前先在它原来的位置插一个**隐形占位块**，同等尺寸、同样 margins，
-     把那块版面空间钉死；兄弟元素因此纹丝不动。
-     占位块是真布局的一部分，会随文件保存（否则重新打开又会重排），
-     并在「回到栅格」/撤销时被清掉。尺寸存在元素自己的 data-eid-ph 上，
-     好处是撤销重做（元素重新变回自由定位）时能原地重建。 */
-  function phSize(el) {
-    const v = (el.getAttribute("data-eid-ph") || "").split(",");
-    return { w: parseFloat(v[0]) || 0, h: parseFloat(v[1]) || 0 };
+     做法：进入编辑时把整个画布**按当前位置一次性冻成绝对坐标**，
+     之后没有任何元素参与文档流 → 拖谁都不会引起重排。
+     冻结只作用于块级盒子；inline 子元素（文字、span）留在父盒的文字流里，跟着父盒走。
+     “退出编辑”但没保存时会把原样式还原，不污染未保存的页面。 */
+  const frozenOrig = new WeakMap();   // el → 冻结前的 style 属性（还原用）
+  const frozenNodes = new Set();
+
+  const r2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+
+  function isBlockLevel(cs) {
+    return cs.display !== "inline" && cs.display !== "contents" && cs.display !== "none";
   }
 
-  function findPh(eid) { return $(`[data-ph-for="${eid}"]`); }
+  /* 画布真实生效的缩放比（取元素自身 rect/offset 比值，跟 state.scale 的更新时序无关）。
+     【坑】直接用 state.scale：fitCanvas() 刚改完 state、浏览器可能还没重算 transform，
+     此时 rect 是未缩放值 → 冻结出来的宽度会被放大 1/k（实测 1200 → 1840）。 */
+  function actualScale() {
+    const s = slide();
+    if (!s || !s.offsetWidth) return state.scale || 1;
+    const k = s.getBoundingClientRect().width / s.offsetWidth;
+    return k > 0 ? k : (state.scale || 1);
+  }
 
-  /* 在元素当前位置插占位块（元素已经搬走时用 data-eid-parent/next 重建） */
-  function ensurePlaceholder(el) {
-    const eid = el.dataset.eid;
-    if (!eid) return;
-    if (findPh(eid)) return;
-    const { w, h } = phSize(el);
-    if (!w || !h) return;
-    const ph = document.createElement("div");
-    ph.setAttribute("data-ph-for", eid);
-    /* 关键：把元素原来的布局类原样拷给占位块。
-       否则在栅格/伸缩布局里，占位块没有 .span-N / flex 类 → 会被自动排到另一个格子，
-       反而把别人挤走（那正是我们要避免的事）。视觉类一并拷过来也无所谓——它是 visibility:hidden。 */
-    const baseCls = el.getAttribute("data-eid-base-cls");
-    if (baseCls) ph.className = baseCls;
-    // visibility:hidden 保留版面空间；pointer-events:none 保证点不到它
-    ph.style.cssText = "margin:0;padding:0;border:0;background:none;box-sizing:border-box;" +
-      "visibility:hidden;pointer-events:none;width:" + w + "px;height:" + h + "px";
+  let freezeCanvasRect = null;
 
-    const inLayer = el.parentElement && el.parentElement.classList.contains("free-layer");
-    let parent, ref = null;
-    if (inLayer) {
-      const pp = el.getAttribute("data-eid-parent");
-      parent = (pp ? nodeByPath(pp) : null) || slide();
-      const nid = el.getAttribute("data-eid-next");
-      ref = nid ? $(`[data-eid="${nid}"]`) : null;
-    } else {
-      parent = el.parentElement;   // 元素还在原位：直接插在它前面
-      ref = el;
+  function freezeLayout() {
+    if (state.frozen) return 0;
+    const canvas = slide();
+    if (!canvas) return 0;
+    const k = actualScale();
+    freezeCanvasRect = canvas.getBoundingClientRect();
+    const n = freezeInto(canvas, k);
+    state.frozen = true;
+    try {
+      window.__FREEZE_DEBUG = {
+        k: k,
+        stateScale: state.scale,
+        userZoom: state.userZoom,
+        canvasRectW: canvas.getBoundingClientRect().width,
+        canvasOffsetW: canvas.offsetWidth,
+        nodes: n,
+        canvasTag: canvas.tagName + "." + (canvas.className || ""),
+        canvasStyleW: canvas.style.width,
+        canvasComputedW: getComputedStyle(canvas).width,
+        canvasTransform: getComputedStyle(canvas).transform,
+        rootTransform: getComputedStyle(document.documentElement).transform,
+        bodyTransform: getComputedStyle(document.body).transform,
+        scopeTransform: document.getElementById("__ed_scope") ? getComputedStyle(document.getElementById("__ed_scope")).transform : null,
+      };
+    } catch (e) {}
+    return n;
+  }
+
+  function freezeInto(parent, k) {
+    let count = 0;
+    const pcs = getComputedStyle(parent);
+    if (pcs.position === "static") {
+      // 成为绝对定位子元素的参照；serialize 会把临时 relative 清掉
+      if (!parent.hasAttribute("data-ed-anchor-pos")) parent.setAttribute("data-ed-anchor-pos", "1");
+      parent.style.position = "relative";
     }
-    if (!parent) return;
-    if (ref && ref.parentElement === parent) parent.insertBefore(ph, ref);
-    else parent.appendChild(ph);
+    const b = parent.getBoundingClientRect();
+    const pl = parseFloat(pcs.borderLeftWidth) || 0;
+    const pt = parseFloat(pcs.borderTopWidth) || 0;
+
+    /* 【必须先读完所有兄弟的矩形，再下手】
+       边读边设会把第一个子元素变绝对 → 后面的兄弟立刻上移，读到的坐标已经是错的
+       （实测：三块全被冻结到同一个 top，版面直接叠在一起）。 */
+    const kids = [];
+    Array.from(parent.children).forEach((ch) => {
+      if (ch.nodeType !== 1) return;
+      if (ch.hasAttribute("data-eid-ui")) return;
+      if (ch.hasAttribute("data-ed-layer") || ch.classList.contains("free-layer")) return;
+      const cs = getComputedStyle(ch);
+      if (cs.display === "none") return;
+      if (!isBlockLevel(cs)) return;                       // inline / contents：不动
+      if (cs.position === "absolute" || cs.position === "fixed") {
+        kids.push({ ch, already: true });
+        return;
+      }
+      const r = ch.getBoundingClientRect();
+      if (!r.width && !r.height) return;
+      kids.push({
+        ch,
+        l: (r.left - b.left) / k - pl,
+        t: (r.top - b.top) / k - pt,
+        w: r.width / k,
+        h: r.height / k,
+        canvasFrame: freezeCanvasRect ? [
+          (r.left - freezeCanvasRect.left) / k,
+          (r.top - freezeCanvasRect.top) / k,
+          r.width / k,
+          r.height / k,
+        ] : null,
+      });
+    });
+
+    kids.forEach((kid) => {
+      if (kid.already) return;
+      setFrozen(kid.ch, kid.l, kid.t, kid.w, kid.h);
+      count += 1;
+      try {
+        (window.__FREEZE_CHECKS = window.__FREEZE_CHECKS || []).push({
+          elId: kid.ch.id || "",
+          cls: kid.ch.className || "",
+          expect: kid.canvasFrame || [kid.l, kid.t, kid.w, kid.h],
+        });
+      } catch (e) {}
+    });
+    kids.forEach((kid) => { count += freezeInto(kid.ch, k); });
+    return count;
   }
 
-  function removePlaceholder(eid) {
-    if (!eid) return;
-    const ph = findPh(eid);
-    if (ph) ph.remove();
+  function setFrozen(el, l, t, w, h) {
+    if (!frozenOrig.has(el)) frozenOrig.set(el, el.getAttribute("style"));
+    frozenNodes.add(el);
+    if (el.dataset.eid) el.setAttribute("data-eid-orig", [r2(l), r2(t), r2(w), r2(h)].join("|"));
+    const base = el.dataset.eid ? (el.getAttribute("data-eid-st") || "") : (el.getAttribute("style") || "");
+    const cleaned = base
+      .replace(/(?:^|;)\s*(position|left|top|width|height|margin|box-sizing)\s*:[^;]*/gi, "")
+      .replace(/;{2,}/g, ";")
+      .replace(/^[;\s]+|[;\s]+$/g, "")
+      .trim();
+    const add = "position:absolute;left:" + r2(l) + "px;top:" + r2(t) + "px;width:" + r2(w) +
+      "px;height:" + r2(h) + "px;margin:0;box-sizing:border-box";
+    const merged = cleaned ? cleaned + ";" + add : add;
+    if (el.dataset.eid) el.setAttribute("data-eid-st", merged);
+    el.setAttribute("style", merged);
+  }
+
+  function restoreFrozen() {
+    frozenNodes.forEach((el) => {
+      const orig = frozenOrig.get(el);
+      if (orig === null || orig === undefined) el.removeAttribute("style");
+      else el.setAttribute("style", orig);
+      if (el.dataset && el.dataset.eid) {
+        el.setAttribute("data-eid-st", orig || "");
+        el.removeAttribute("data-eid-orig");
+      }
+    });
+    frozenNodes.clear();
+    state.frozen = false;
   }
 
   function freeLayer() {
@@ -456,13 +548,6 @@
     el.setAttribute("data-eid-parent", el.parentElement ? parentPath(el.parentElement) : "");
     el.setAttribute("data-eid-next",
       el.nextElementSibling && el.nextElementSibling.dataset ? (el.nextElementSibling.dataset.eid || "") : "");
-    /* 先把占位尺寸记下来（含 margins，否则兄弟还是会因为 margin 变化而挪 2-3px），
-       再在它前面插一个隐形占位块钉住版面，然后才搬进自由定位层。 */
-    const cs = getComputedStyle(el);
-    const mw = (parseFloat(cs.marginLeft) || 0) + (parseFloat(cs.marginRight) || 0);
-    const mh = (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
-    el.setAttribute("data-eid-ph", (r.w + mw) + "," + (r.h + mh));
-    ensurePlaceholder(el);
 
     const layer = freeLayer();
     layer.appendChild(el);
@@ -933,7 +1018,7 @@
           font:13px/1.5 -apple-system,"PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif;z-index:2147483000;display:none;
           border-left:1px solid #2c2c2a;overflow-y:auto;padding:14px 14px 60px;box-sizing:border-box}
         body[data-editing]{padding-right:300px}
-        body[data-editing] .slide{width:1920px;max-width:none;margin:24px auto;transform-origin:top left;
+        body[data-editing] .slide{width:var(--ed-w,1920px);max-width:none;margin:24px auto;transform-origin:top left;
           transform:scale(var(--ed-scale,1))}
         #__editable_panel h4{margin:16px 0 8px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
           color:#8b8b84;font-weight:700}
@@ -1000,7 +1085,7 @@
       <div style="height:6px"></div>
       <button class="pri" id="ed_save">保存到原文件</button>
       <div style="height:6px"></div>
-      <div class="row"><button id="ed_regrid">回到栅格</button><button id="ed_reset">清除改动</button></div>
+      <div class="row"><button id="ed_save">保存到原文件</button><button id="ed_saveas">另存副本</button><button id="ed_regrid">回到原位</button><button id="ed_reset">清除改动</button></div>
       <div style="height:10px"></div>
       <div class="hint">
         单击选中 · 拖动移动 · 拖角/边改大小 · 顶部圆点旋转 · 双击改文字<br>
@@ -1087,7 +1172,7 @@
       if (t !== null && t !== "") setTextPreserving(el, t);
       ["data-eid", "data-eid-cls", "data-eid-st", "data-eid-base-cls", "data-eid-text",
         "data-eid-parent", "data-eid-next", "data-free", "data-free-parent", "data-sel",
-        "draggable", "data-text-dirty", "contenteditable", "data-eid-ph"].forEach((a) => el.removeAttribute(a));
+        "draggable", "data-text-dirty", "contenteditable", "data-eid-orig"].forEach((a) => el.removeAttribute(a));
       if (el.hasAttribute("data-ed-layer")) el.removeAttribute("data-ed-layer");
     });
     /* 【不要删 data-drag】
@@ -1224,6 +1309,38 @@
     }
     if (btn) btn.textContent = old;
   }
+  /* 另存副本：内容送到 /__saveas，由服务端弹「另存为」对话框（或写到指定路径）
+     —— 主文件不动，工作台当前编辑的还是原文件 */
+  async function saveAs(opts) {
+    const btn = $("#ed_saveas");
+    const old = btn ? btn.textContent : "";
+    try {
+      if (btn) btn.textContent = "选择位置…";
+      const content = serialize();
+      const res = await fetch(API_BASE + "/__saveas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.assign({ from: FILE, content: content }, opts || {})),
+      });
+      const j = await res.json();
+      if (!j.ok) {
+        if (j.canceled) toast("已取消另存");
+        else toast("另存失败：" + (j.error || "未知错误"));
+        notifyParent({ type: "savedas", value: j });
+        return j;
+      }
+      // 另存不改基准：主文件的「有没有改动」状态不变
+      notifyParent({ type: "savedas", value: j });
+      toast("已另存副本：" + j.path + "（" + j.bytes + " bytes）");
+      return j;
+    } catch (e) {
+      toast("另存失败：" + e.message);
+      return { ok: false, error: e.message };
+    } finally {
+      if (btn) btn.textContent = old;
+    }
+  }
+
   function toast(msg) {
     let t = $("#ed_toast");
     if (!t) {
@@ -1317,26 +1434,33 @@
        结果「没改动也写盘」的门控被绕过了。 */
     on("ed_save", "click", () => save());
     on("ed_save2", "click", () => save());
+    on("ed_saveas", "click", () => saveAs());
 
     /* 回到栅格：真正把元素放回原来的父节点与原位置（不能只清 style） */
+    /* 回到原位：把自由定位的元素放回它原来的父容器 + 原来的绝对坐标（PPT 里的“复位”） */
     on("ed_regrid", "click", () => {
       const el = blockOf(state.selected); if (!el) return;
-      if (el.getAttribute("data-free") !== "1") { toast("该元素本来就在栅格里"); return; }
+      if (el.getAttribute("data-free") !== "1") { toast("这个元素本来就在原位"); return; }
       pushUndo();
       const pp = el.getAttribute("data-eid-parent");
       const nid = el.getAttribute("data-eid-next");
+      const orig = (el.getAttribute("data-eid-orig") || "").split("|").map(Number);
       el.removeAttribute("data-free");
-      el.style.position = ""; el.style.left = ""; el.style.top = "";
-      el.style.width = ""; el.style.height = ""; el.style.margin = "";
-      el.style.zIndex = ""; el.style.boxSizing = "";
-      el.setAttribute("data-eid-st", "");
+      el.style.zIndex = "";
       el.removeAttribute("data-eid-parent");
       el.removeAttribute("data-eid-next");
-      el.removeAttribute("data-eid-ph");
-      applyProps(el);
       backToGrid(el, pp, nid);
+      if (orig.length === 4 && !isNaN(orig[0])) {
+        // 没经历过画布锁定的页面（比如旧文件）就清掉手写的位置，回到流里
+        setFrozen(el, orig[0], orig[1], orig[2], orig[3]);
+      } else {
+        el.style.position = ""; el.style.left = ""; el.style.top = "";
+        el.style.width = ""; el.style.height = ""; el.style.margin = ""; el.style.boxSizing = "";
+        el.setAttribute("data-eid-st", "");
+        applyProps(el);
+      }
       markDirty(); refresh(); updateSelectionBox();
-      toast("已移出自由定位层，回到栅格原位");
+      toast("已放回原来的位置");
     });
 
     on("ed_reset", "click", () => {
@@ -1358,12 +1482,16 @@
     if (on) {
       assignIds();
       fitCanvas();
+      /* 画布锁定：把整页按当前位置冻成绝对坐标 → 拖任何元素都不会引起重排（PPT 式操作） */
+      freezeLayout();
       refresh();
       updateSelectionBox();
     } else {
       drag = null; pending = null;
       $$("[data-eid]").forEach((el) => el.removeAttribute("data-sel"));
       state.selected = null;
+      /* 退出编辑时把画布解冻，页面回到原始样式（除非已经保存） */
+      restoreFrozen();
       $$("[data-ed-anchor], .slide, .page").forEach((s) => {
         s.style.marginTop = ""; s.style.marginBottom = ""; s.style.marginRight = "";
         s.style.transform = ""; s.style.transformOrigin = "";
@@ -1382,6 +1510,16 @@
 
   function init() {
     assignIds();
+    /* 记住画布「自己的」尺寸：编辑模式会强制 .slide 到 1920×1080（deck 预设），
+       但任意页面（比如宽 1280 的普通页）不应该被改形。所以先量下自然尺寸写进 CSS 变量，
+       编辑期用的是 var(--ed-w) 而不是写死的 1920。 */
+    try {
+      const s = slide();
+      if (s && s.offsetWidth) {
+        s.style.setProperty("--ed-w", s.offsetWidth + "px");
+        s.style.setProperty("--ed-h", s.offsetHeight + "px");
+      }
+    } catch (e) {}
     buildUI();
     bindUI();
 
@@ -1455,6 +1593,7 @@
   window.__editableAPI = {
     serialize: serialize,
     save: save,
+    saveAs: saveAs,
     /* 调试/验收用：看“保存门控”两边到底差在哪 */
     canonicalHtml: canonicalHtml,
     pristineText: pristineText,

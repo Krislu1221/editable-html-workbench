@@ -83,6 +83,7 @@
     <button id="next">→</button>
     <button id="edit" class="edit">进入编辑</button>
     <button id="save" class="save" disabled>保存到原文件</button>
+    <button id="saveas" disabled>另存副本</button>
   </div>
 
   <aside class="side">
@@ -271,6 +272,8 @@ editBtn.onclick = function () {
   load();
 };
 saveBtn.onclick = function () { doSave(); };
+var saveAsBtn = document.getElementById('saveas');
+saveAsBtn.onclick = function () { doSaveAs(); };
 document.getElementById('prev').onclick = function () {
   var n = htmlFiles().length; if (!n) return;
   idx = (idx - 1 + n) % n; load();
@@ -319,10 +322,32 @@ function doSave() {
   api.save();
 }
 
+function doSaveAs() {
+  var w = f.contentWindow;
+  var api = w && w.__editableAPI;
+  if (!api) { toast('当前不在编辑模式'); return; }
+  toast('正在另存副本，系统对话框可能稍后弹出…');
+  var p = api.saveAs();
+  if (p && p.catch) p.catch(function (e) { toast('另存失败：' + e.message); });
+}
+
 window.addEventListener('message', function (e) {
   var m = e.data || {};
   if (m.type === 'dirty') { dirty = !!m.value; saveBtn.disabled = !dirty; dirtyTip.textContent = dirty ? '● 有未保存改动' : ''; }
+  if (m.type === 'ready') { saveAsBtn.disabled = false; }
   if (m.type === 'saved') { dirty = false; saveBtn.disabled = true; dirtyTip.textContent = ''; toast('已保存到 ' + (m.value && m.value.path)); }
+  if (m.type === 'savedas') {
+    var v = m.value || {};
+    if (v.ok) {
+      toast('已另存副本：' + v.path + (v.inRoot ? '' : '（在项目目录外）'));
+      // 副本落在项目内的话，刷新左侧文件列表，不重载页面
+      if (v.inRoot) {
+        fetch('/__list').then(function (r) { return r.json(); }).then(function (j) {
+          list = j.files || []; renderList();
+        });
+      }
+    }
+  }
   if (m.type === 'exit') { if (editing) editBtn.click(); }
   /* 编辑器报上来的实际缩放比 */
   if (m.type === 'scale') {

@@ -78,6 +78,7 @@ const backup = new Map();
 
 /* 文件对话框同一时刻只允许一个（连点会堆出一串看不见的窗口） */
 let pickPending = false;
+let savePending = false;
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -193,6 +194,55 @@ function capture(cmd, args, timeout = 180000) {
   });
 }
 
+/* “副本”默认文件名：原名 + 时间戳（不覆盖上一个副本） */
+function copyName(from) {
+  const base = path.basename(from || OPEN_FILE || "index.html").replace(/\.htm?$/i, "");
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}`;
+  return `${base}-copy-${stamp}.html`;
+}
+
+/* 「另存为」对话框（三平台）：用户亲手选位置 → 返回绝对路径 */
+async function saveAsDialog(from) {
+  const name = copyName(from);
+  const startDir = from ? path.dirname(path.resolve(from)) : ROOT;
+  const p = process.platform;
+
+  if (p === "win32") {
+    const ps1 = path.join(__dirname, "pick-save.ps1");
+    if (!fsSync.existsSync(ps1)) return { error: "缺少 scripts/pick-save.ps1" };
+    const outFile = path.join(os.tmpdir(), "edwb-save-" + crypto.randomUUID() + ".txt");
+    const r = await capture("powershell", [
+      "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", ps1,
+      "-OutFile", outFile, "-InitialDir", startDir, "-FileName", name,
+    ]);
+    let s = "";
+    try { s = (await fs.readFile(outFile, "utf8")).trim(); } catch {}
+    try { await fs.unlink(outFile); } catch {}
+    if (s) return { path: s };
+    return { canceled: true, error: (r.err || "").slice(0, 300) };
+  }
+
+  if (p === "darwin") {
+    const esc = (v) => v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const script = `POSIX path of (choose file name with prompt "另存副本到" default name "${esc(name)}" default location POSIX file "${esc(startDir)}")`;
+    const r = await capture("osascript", ["-e", script]);
+    const s = (r.out || "").trim();
+    if (r.code === 0 && s) return { path: s };
+    return { canceled: true };
+  }
+
+  const r = await capture("zenity", [
+    "--file-selection", "--save", "--confirm-overwrite",
+    "--title=另存副本到",
+    `--filename=${path.join(startDir, name)}`,
+  ]);
+  const s = (r.out || "").trim();
+  if (r.code === 0 && s) return { path: s };
+  return { canceled: true };
+}
+
 async function pickFile() {
   const p = process.platform;
   if (p === "win32") {
@@ -296,6 +346,33 @@ const server = http.createServer(async (req, res) => {
       const st = await fs.stat(abs);
       return json(res, 200, {
         ok: true, path: rel, bytes: st.size,
+        mtime: st.mtime.toISOString(),
+        hash: crypto.createHash("sha1").update(payload.content).digest("hex").slice(0, 12),
+      });
+    }
+
+    /* 另存副本：内容写到用户选的位置（主文件不动，也不影响当前编辑基准） */
+    if (pathname === "/__saveas" && req.method === "POST") {
+      const raw = await readBody(req);
+      let payload;
+      try { payload = JSON.parse(raw); } catch { return json(res, 400, { ok: false, error: "bad json" }); }
+      if (typeof payload.content !== "string") return json(res, 400, { ok: false, error: "no content" });
+      let target = String(payload.path || "").trim();
+      if (!target) {
+        if (savePending) return json(res, 200, { ok: false, busy: true, error: "已经有一个另存对话框开着" });
+        savePending = true;
+        let r;
+        try { r = await saveAsDialog(payload.from || OPEN_FILE || null); } finally { savePending = false; }
+        if (!r.path) return json(res, 200, { ok: false, canceled: true, error: r.error || "cancelled" });
+        target = r.path;
+      }
+      const abs = path.resolve(target);
+      try { await fs.mkdir(path.dirname(abs), { recursive: true }); } catch {}
+      await fs.writeFile(abs, payload.content, "utf8");
+      const st = await fs.stat(abs);
+      const inRoot = abs === ROOT || abs.startsWith(ROOT + path.sep);
+      return json(res, 200, {
+        ok: true, path: abs, bytes: st.size, inRoot,
         mtime: st.mtime.toISOString(),
         hash: crypto.createHash("sha1").update(payload.content).digest("hex").slice(0, 12),
       });
