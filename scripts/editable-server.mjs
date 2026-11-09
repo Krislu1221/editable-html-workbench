@@ -43,6 +43,18 @@ function arg(name, def) {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = path.resolve(__dirname, "..");   // 工作台自身的包目录
 
+/* 工作台 UI 根（/__wb/ 从这取）——兼容两种包布局：
+   ① 独立包：<pkg>/studio.html + <pkg>/assets/editable.js
+   ② skill 内嵌：<pkg>/assets/editable-kit/studio.html 及同目录 editable.js */
+const UI_ROOT = (() => {
+  const candidates = [PACKAGE_ROOT, path.join(PACKAGE_ROOT, "assets", "editable-kit")];
+  for (const c of candidates) {
+    try { if (fsSync.statSync(path.join(c, "studio.html")).isFile()) return c; } catch { /* next */ }
+  }
+  return PACKAGE_ROOT;
+})();
+const UI_IS_KIT = path.basename(UI_ROOT) === "editable-kit";
+
 /* 被编辑的项目目录 + 当前「打开中的文档」
    — --root 传目录：整个目录都能浏览
    — --root 传 .html 文件：根切到它所在目录，并默认打开它
@@ -96,7 +108,18 @@ function safeIn(base, rel) {
   return p;
 }
 function safePath(rel) { return safeIn(ROOT, rel); }
-function packagePath(rel) { return safeIn(PACKAGE_ROOT, rel); }
+/* /__wb/ 路径解析：kit 布局下允许省略最优的 assets/ 前缀（/__wb/assets/editable.js → <kit>/editable.js），
+   且必须真存在，避免 404 落到错误目录 */
+function packagePath(rel) {
+  const tries = [rel];
+  if (UI_IS_KIT && /^assets\//.test(rel)) tries.push(rel.replace(/^assets\//, ""));
+  for (const t of tries) {
+    const abs = safeIn(UI_ROOT, t);
+    if (!abs) continue;
+    try { if (fsSync.statSync(abs).isFile()) return abs; } catch { /* next */ }
+  }
+  return null;
+}
 function relOf(abs) { return path.relative(ROOT, abs).split(path.sep).join("/"); }
 
 /* ── 注入 ─────────────────────────────────────────────── */
