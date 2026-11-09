@@ -407,6 +407,7 @@
   }
 
   let freezeCanvasRect = null;
+  let freezeZ = 0;
 
   function freezeLayout() {
     if (state.frozen) return 0;
@@ -414,6 +415,7 @@
     if (!canvas) return 0;
     const k = actualScale();
     freezeCanvasRect = canvas.getBoundingClientRect();
+    freezeZ = 0;
     const n = freezeInto(canvas, k);
     state.frozen = true;
     try {
@@ -506,8 +508,12 @@
       .replace(/;{2,}/g, ";")
       .replace(/^[;\s]+|[;\s]+$/g, "")
       .trim();
+    /* 层序：冻结时按文档顺序发一个初始 z-index（PPT 里每个对象都有层号）。
+       已有 z-index 的元素不覆盖——否则用户调过的层序会被冻结重置。 */
+    const hasZ = /(?:^|;)\s*z-index\s*:/i.test(cleaned);
+    const zPart = hasZ ? "" : ";z-index:" + (++freezeZ);
     const add = "position:absolute;left:" + r2(l) + "px;top:" + r2(t) + "px;width:" + r2(w) +
-      "px;height:" + r2(h) + "px;margin:0;box-sizing:border-box";
+      "px;height:" + r2(h) + "px;margin:0;box-sizing:border-box" + zPart;
     const merged = cleaned ? cleaned + ";" + add : add;
     if (el.dataset.eid) el.setAttribute("data-eid-st", merged);
     el.setAttribute("style", merged);
@@ -534,7 +540,7 @@
       l.className = "free-layer";
       // 定位层是文档的真实结构（不是编辑器 UI），不能被序列化清理掉
       l.setAttribute("data-ed-layer", "1");
-      l.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:60";
+      l.style.cssText = "position:absolute;inset:0;pointer-events:none";
       const s = slide();
       if (s) s.appendChild(l);
     }
@@ -1189,12 +1195,13 @@
       const st = (el.getAttribute("style") || "").replace(/;{2,}/g, ";").replace(/;\s*$/, "").trim();
       if (st) el.setAttribute("style", st); else el.removeAttribute("style");
     });
-    // 非定位层成员不该带 z-index
+    // 非定位元素不该带 z-index；但定位元素（含冻结成 absolute 的）的 z-index 是层序，必须保留
     const layer = clone.querySelector(".free-layer");
     clone.querySelectorAll("[style]").forEach((el) => {
       const st = el.getAttribute("style") || "";
-      const isFree = layer && (el === layer || layer.contains(el));
-      if (!isFree || (el !== layer && el.parentElement !== layer)) {
+      const positioned = /position\s*:\s*(absolute|fixed|relative)/i.test(st);
+      const inLayer = layer && el !== layer && layer.contains(el);
+      if (!positioned && !inLayer) {
         const cleaned = st.replace(/z-index\s*:\s*[^;]+;?/g, "").replace(/;{2,}/g, ";").trim();
         if (cleaned) el.setAttribute("style", cleaned); else el.removeAttribute("style");
       }
@@ -1603,6 +1610,8 @@
     file: FILE,
     refresh: () => { refresh(); updateSelectionBox(); },
     select: (el) => select(el),
+    /* 层序：front / back / up / down（需先 select） */
+    layer: (cmd) => layerCmd(cmd),
     /* 调试用：返回编辑器内部状态 */
     debug: () => {
       const blk = state.selected ? blockOf(state.selected) : null;
