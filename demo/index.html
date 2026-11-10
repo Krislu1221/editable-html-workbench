@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Editable HTML 工作台 · 交付物不应该只能由作者改</title>
+<meta name="description" content="指向任意项目文件夹，在浏览器里拖动 / 改字 / 改色 / 调层级，保存就地写回原文件。零依赖，只监听 127.0.0.1。">
+<style>
+  :root{
+    --bg:#0f1115; --bg2:#15181e; --line:#262b34; --line2:#343a45;
+    --ink:#e9edf3; --ink2:#9aa4b2; --ink3:#6b7480;
+    --cy:#4fd1c5; --am:#f0b24a; --vi:#9d8cff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 40px}
+  a{color:inherit}
+
+  .top{display:flex;align-items:center;gap:14px;padding:26px 0;border-bottom:1px solid var(--line)}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:-.02em}
+  .logo i{width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,var(--cy),var(--vi));display:block;transform:rotate(-8deg)}
+  .tag{font:600 12px/1 var(--mono);color:var(--ink3);border:1px solid var(--line2);padding:5px 8px;border-radius:4px}
+  .top .sp{flex:1}
+  .top nav{display:flex;gap:22px;font-size:13px;color:var(--ink2)}
+  .top nav a{text-decoration:none}
+  .top nav a:hover{color:var(--ink)}
+
+  .hero{padding:76px 0 62px;display:grid;grid-template-columns:1.02fr .98fr;gap:56px;align-items:center}
+  .kicker{font:600 12px/1 var(--mono);color:var(--cy);letter-spacing:.16em;text-transform:uppercase}
+  h1{font-size:56px;line-height:1.06;letter-spacing:-.03em;margin:18px 0 22px;font-weight:800}
+  h1 em{font-style:normal;background:linear-gradient(180deg,var(--am),#e08f2a);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:16.5px;line-height:1.75;color:var(--ink2);max-width:44ch;margin:0}
+  .lede b{color:var(--ink)}
+  .lede code{font:500 12.5px/1 var(--mono);color:var(--am);background:#1b1f27;padding:2px 5px;border-radius:3px}
+  .btns{display:flex;gap:12px;margin-top:32px}
+  .btn{font:700 14px/1 var(--sans);padding:14px 22px;border-radius:8px;border:1px solid var(--line2);background:var(--bg2);color:var(--ink);text-decoration:none;display:inline-block}
+  .btn.p{background:var(--cy);border-color:var(--cy);color:#08201d}
+  .meta{display:flex;gap:18px;margin-top:26px;font:500 12px/1 var(--mono);color:var(--ink3);flex-wrap:wrap}
+
+  .canvas{background:var(--bg2);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 30px 80px -30px #000}
+  .cbar{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);font:500 11px/1 var(--mono);color:var(--ink3)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--line2);display:block}
+  .cbar .sp{flex:1}
+  .cbody{background:radial-gradient(circle at 50% -10%,#1c2330 0,transparent 60%);line-height:0}
+  .cbody img{width:100%;height:auto;display:block}
+
+  .sec{padding:70px 0;border-top:1px solid var(--line)}
+  .sec h2{font:600 12px/1 var(--mono);color:var(--ink3);letter-spacing:.14em;text-transform:uppercase;margin:0 0 32px}
+
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .card{border:1px solid var(--line);border-radius:10px;padding:26px 24px;background:var(--bg2)}
+  .card .n{font:700 12px/1 var(--mono);color:var(--cy);margin-bottom:18px}
+  .card h3{font-size:19px;margin:0 0 10px;letter-spacing:-.01em}
+  .card p{font-size:14px;line-height:1.7;color:var(--ink2);margin:0}
+  .card code{font:500 11.5px/1 var(--mono);color:var(--am);background:#1b1f27;padding:2px 5px;border-radius:3px}
+
+  .layers{display:grid;grid-template-columns:240px 1fr;gap:44px;align-items:start}
+  .layer{display:flex;gap:14px;padding:15px 0;border-bottom:1px solid var(--line)}
+  .sw{width:10px;flex:0 0 10px;border-radius:2px;height:46px}
+  .layer b{display:block;font-size:14px;margin-bottom:4px}
+  .layer span{font:500 11.5px/1.6 var(--mono);color:var(--ink3)}
+  pre{margin:0;background:#12151b;border:1px solid var(--line);border-radius:10px;padding:20px 22px;font:500 12.5px/1.9 var(--mono);color:#c9d1dc;overflow:auto}
+  .k{color:var(--vi)}.s{color:var(--cy)}.c{color:#5d6a7a}.a{color:var(--am)}
+
+  /* 参数条：来自方向 C，横排一格一参数 */
+  .strip{display:grid;grid-template-columns:repeat(6,1fr);border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg2)}
+  .cell{padding:20px 18px;border-left:1px solid var(--line)}
+  .cell:first-child{border-left:0}
+  .cell .lb{font:600 10.5px/1 var(--mono);color:var(--ink3);letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px}
+  .cell .vl{font-size:14.5px;font-weight:700;letter-spacing:-.01em}
+  .cell .vl small{display:block;font:500 11.5px/1.5 var(--mono);color:var(--ink3);font-weight:400;margin-top:5px;letter-spacing:0}
+  .cmd{margin-top:18px}
+
+  .shot{display:grid;grid-template-columns:1fr;gap:14px}
+  .shot .canvas{box-shadow:0 24px 60px -28px #000}
+  .cap{font:500 11.5px/1.6 var(--mono);color:var(--ink3);display:flex;gap:10px;align-items:center;margin-top:2px}
+  .cap b{color:var(--cy);font-weight:700}
+  .bullet{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:30px}
+  .bl{border-top:2px solid var(--line2);padding-top:16px}
+  .bl h4{margin:0 0 7px;font-size:15px}
+  .bl p{margin:0;font-size:13.5px;line-height:1.7;color:var(--ink2)}
+  .bl code{font:500 11.5px/1 var(--mono);color:var(--cy)}
+
+  .steps{display:grid;grid-template-columns:repeat(3,1fr)}
+  .step{padding:0 26px;border-left:1px solid var(--line)}
+  .step:first-child{border-left:0;padding-left:0}
+  .step .i{font:700 38px/1 var(--mono);color:#20262f;margin-bottom:14px}
+  .step h4{margin:0 0 8px;font-size:16px}
+  .step p{margin:0;font-size:13.5px;line-height:1.7;color:var(--ink2)}
+  .step code{font:500 11.5px/1 var(--mono);color:var(--cy)}
+
+  .foot{border-top:1px solid var(--line);padding:44px 0 68px;display:flex;justify-content:space-between;align-items:center;gap:24px}
+  .foot p{margin:0;font:500 12px/1.7 var(--mono);color:var(--ink3)}
+
+  @media (max-width:960px){
+    .wrap{padding:0 22px}
+    .hero{grid-template-columns:1fr;gap:36px;padding-top:52px}
+    h1{font-size:40px}
+    .cards,.bullet,.steps{grid-template-columns:1fr}
+    .layers{grid-template-columns:1fr;gap:24px}
+    .strip{grid-template-columns:repeat(2,1fr)}
+    .cell:nth-child(odd){border-left:0}
+    .step{border-left:0;padding:0 0 24px}
+    .foot{flex-direction:column;align-items:flex-start}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="logo"><i></i>Editable HTML</div><span class="tag">v5.12</span>
+    <span class="sp"></span>
+    <nav>
+      <a href="#what">能力</a><a href="#layers">三层分离</a><a href="#spec">参数</a><a href="#how">上手</a><a href="https://github.com/Krislu1221/editable-html-workbench">GitHub</a>
+    </nav>
+  </div>
+
+  <section class="hero">
+    <div>
+      <div class="kicker">zero-dependency · local-only</div>
+      <h1>把交付的 HTML<br>变成<em>可以改</em>的。</h1>
+      <p class="lede">指到一个文件夹，浏览器里拖放、改字、改色、调层级，<b>保存写回原文件</b>。
+      不产生 <code>(1).html</code>，不改样式表，写完仍是干净、可 git diff 的源码。</p>
+      <div class="btns">
+        <a class="btn p" href="https://github.com/Krislu1221/editable-html-workbench">GitHub 取包 →</a>
+        <a class="btn" href="#shots">看它长什么样 ↓</a>
+      </div>
+      <div class="meta"><span>Node 18+</span><span>0 依赖</span><span>MIT</span><span>macOS / Windows / Linux</span></div>
+    </div>
+
+    <div class="canvas">
+      <div class="cbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span>studio · 127.0.0.1:8899</span><span class="sp"></span><span>总览</span></div>
+      <div class="cbody"><img src="assets/studio-preview.png" alt="Editable HTML 工作台总览：左侧页面树、中间画布、右侧属性面板"></div>
+    </div>
+  </section>
+
+  <section class="sec" id="what">
+    <h2>三个动作就够了</h2>
+    <div class="cards">
+      <div class="card"><div class="n">01</div><h3>拖动即所见</h3>
+        <p>按住元素拖，靠近其它块自动吸附；控制点缩放，双击直接改字。位移按画布缩放比换算——屏幕 100px 就是该走的 100px，面板里还有 X / Y / 宽 / 高 数值框。</p></div>
+      <div class="card"><div class="n">02</div><h3>拖谁都不动别人</h3>
+        <p>进编辑那一刻把整页按当前位置<strong>冻成绝对坐标</strong>，之后没有元素参与文档流：元素可以重叠，原位置不留空洞。层序置顶 / 置底 / 上移 / 下移都活过保存。</p></div>
+      <div class="card"><div class="n">03</div><h3>写回原文件</h3>
+        <p>保存 = 就地写回同一个路径。没真改动就不写盘，连点两次字节不变；写回来的是干净页面，注入的编辑器脚本已被剥掉，<code>/__revert</code> 可整页回退。</p></div>
+    </div>
+  </section>
+
+  <section class="sec" id="layers">
+    <h2>三层分离 · 改一处不惊动其他两处</h2>
+    <div class="layers">
+      <div>
+        <div class="layer"><div class="sw" style="background:var(--am)"></div><div><b>设计决策</b><span>tokens.css</span></div></div>
+        <div class="layer"><div class="sw" style="background:var(--cy)"></div><div><b>布局</b><span>.grid / .span-N</span></div></div>
+        <div class="layer" style="border:0"><div class="sw" style="background:var(--vi)"></div><div><b>内容</b><span>标记本身</span></div></div>
+        <p style="font:500 11.5px/1.7 var(--mono);color:var(--ink3);margin:22px 0 0">编辑器只写内容层与 class 属性<br>→ 永远不破坏设计层 / 布局层</p>
+      </div>
+      <pre><span class="c">/* tokens.css —— 唯一真源 */</span>
+<span class="k">:root</span> { <span class="a">--accent</span>: <span class="s">#1f7a3d</span>; <span class="a">--fs-3</span>: <span class="s">20px</span>; <span class="a">--r-md</span>: <span class="s">10px</span>; }
+
+<span class="c">/* 页面 —— 只有语义 class，没有魔法数字 */</span>
+&lt;<span class="k">section</span> <span class="a">class</span>=<span class="s">"grid"</span>&gt;
+  &lt;<span class="k">div</span> <span class="a">class</span>=<span class="s">"blk span-4"</span>&gt;卡片一&lt;/<span class="k">div</span>&gt;
+  &lt;<span class="k">div</span> <span class="a">class</span>=<span class="s">"blk span-6 start-5"</span>&gt;卡片二&lt;/<span class="k">div</span>&gt;
+&lt;/<span class="k">section</span>&gt;</pre>
+    </div>
+  </section>
+
+  <section class="sec" id="shots">
+    <h2>编辑态 · 画布锁定之后能做什么</h2>
+    <div class="shot">
+      <div class="canvas">
+        <div class="cbar"><i class="dot"></i><i class="dot"></i><i class="dot"></i><span>studio · 编辑中</span><span class="sp"></span><span>0.68× · 按住 ␣ 看 1:1</span></div>
+        <div class="cbody"><img src="assets/studio-editing.png" alt="编辑态：元素被选中、属性面板可改 X/Y/宽/高与颜色字体、以及层序按钮"></div>
+      </div>
+      <div class="cap"><b>FIG 2</b><span>左侧页面树 · 中间画布等比缩放 · 右侧属性面板改色 / 字号 / 对齐 / 起始列 / 跨列 / 层序</span></div>
+    </div>
+    <div class="bullet">
+      <div class="bl"><h4>画布锁定</h4><p>v5.10 起进编辑不再重排：<code>←↑→↓</code> 每次 1px、<code>Shift</code> 10px，700ms 内的连续微调合成一个撤销步。</p></div>
+      <div class="bl"><h4>真层序</h4><p>v5.11 起 z-index 会跟着保存一起活下来：置顶 / 置底 / 上移 / 下移，拖出来的元素压在正文上也仍然是那张源码。</p></div>
+      <div class="bl"><h4>另存副本</h4><p>想留原稿就点另存：<code>/__saveas</code> 弹系统对话框，主文件与「已改动」基准不动。</p></div>
+    </div>
+  </section>
+
+  <section class="sec" id="spec">
+    <h2>参数</h2>
+    <div class="strip">
+      <div class="cell"><div class="lb">Runtime</div><div class="vl">Node.js 18+<small>只用内置 http / fs / path</small></div></div>
+      <div class="cell"><div class="lb">Dependencies</div><div class="vl">0<small>无 npm install</small></div></div>
+      <div class="cell"><div class="lb">Platform</div><div class="vl">三平台<small>macOS · Windows · Linux</small></div></div>
+      <div class="cell"><div class="lb">Network</div><div class="vl">127.0.0.1<small>端口占用自动顺延</small></div></div>
+      <div class="cell"><div class="lb">Persistence</div><div class="vl">写回原文件<small>+ 内存回退 /__revert</small></div></div>
+      <div class="cell"><div class="lb">License</div><div class="vl">MIT<small>无 vendor 许可</small></div></div>
+    </div>
+    <pre class="cmd"><span class="c"># 起服务：零依赖，端口占用自动顺延</span>
+node scripts/editable-studio.mjs --root <span class="s">"/path/to/project"</span> --port <span class="k">8899</span>
+
+<span class="c"># 或双击选文件夹</span>
+<span class="k">open-project.command</span>   <span class="c"># macOS</span>
+<span class="k">open-project.cmd</span>       <span class="c"># Windows</span></pre>
+  </section>
+
+  <section class="sec" id="how">
+    <h2>三步，六十秒</h2>
+    <div class="steps">
+      <div class="step"><div class="i">01</div><h4>指到项目</h4><p><code>--root</code> 指任意文件夹或单份 HTML；也可在编辑器里点「打开文档」临时切工作根。</p></div>
+      <div class="step"><div class="i">02</div><h4>进编辑</h4><p>页面地址后加 <code>?edit=1</code>。编辑器脚本由服务端注入，项目本身不需要引任何东西。</p></div>
+      <div class="step"><div class="i">03</div><h4>改完保存</h4><p>点「保存到原文件」或 <code>Ctrl+S</code>。原文件就地更新，注入痕迹全部剥干净。</p></div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <p>MIT License · 无第三方运行时依赖 · 服务只监听 127.0.0.1</p>
+    <a class="btn p" href="https://github.com/Krislu1221/editable-html-workbench">github.com/Krislu1221/editable-html-workbench</a>
+  </div>
+</div>
+</body>
+</html>

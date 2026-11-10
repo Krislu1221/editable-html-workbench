@@ -306,11 +306,38 @@
     return parts.some((p) => p === el || p.contains(el));
   }
 
+  /* 【坑】画布锁定之后，锚点容器自身的盒子会塌陷——排版都挂在绝对子元素上，
+     容器只剩内边距（实测 1240×1980 的页面塌成 1240×56）。
+     直接拿 offsetHeight 当自然高度算缩放与垂直居中 → marginTop = (视口 − 56)/2 ≈ 400px，
+     页面被推到屏幕中部、上方留下大片空白（点「适应」时最明显）。
+     所以冻结态改用「子元素范围」量真实内容尺寸（页面坐标系、未缩放）。 */
+  function contentExtent(el) {
+    const k = actualScale();
+    const b = el.getBoundingClientRect();
+    let w = 0, h = 0;
+    Array.from(el.children).forEach((ch) => {
+      if (ch.nodeType !== 1) return;
+      if (ch.hasAttribute("data-eid-ui")) return;
+      const q = ch.getBoundingClientRect();
+      if (!q.width && !q.height) return;
+      w = Math.max(w, (q.right - b.left) / k);
+      h = Math.max(h, (q.bottom - b.top) / k);
+    });
+    return { w: w, h: h };
+  }
+
   function fitCanvas() {
     const s = slide();
     if (!s) return;
-    const natW = s.offsetWidth || 1920;
-    const natH = s.offsetHeight || 1080;
+    const parts0 = canvasParts(s);
+    const singlePart = parts0.length === 1;
+    let natW = s.offsetWidth || 1920;
+    let natH = s.offsetHeight || 1080;
+    if (state.frozen && singlePart) {
+      const ex = contentExtent(s);
+      if (ex.w > natW) natW = ex.w;
+      if (ex.h > natH) natH = ex.h;
+    }
     // 右侧属性面板是 fixed，可用宽度 = 视口 - 面板；高度也要参与，避免画布越出视口
     const availW = Math.max(160, window.innerWidth - 300);
     const availH = Math.max(140, window.innerHeight);
@@ -326,11 +353,13 @@
     state.scale = sc;
     document.documentElement.style.setProperty("--ed-scale", String(sc));
 
-    const parts = canvasParts(s);
-    const single = parts.length === 1;
+    const parts = parts0;
+    const single = singlePart;
     parts.forEach((p) => {
-      const pw = p.offsetWidth || natW;
-      const ph = p.offsetHeight || natH;
+      /* 冻结态用上面量出来的 natW/natH：p.offsetHeight 是塌陷后的值（≈内边距），
+         拿它算 marginBottom 会让滚动区域也跟着塌掉，放大的页面滚不到下半截。 */
+      const pw = (state.frozen && single) ? natW : (p.offsetWidth || natW);
+      const ph = (state.frozen && single) ? natH : (p.offsetHeight || natH);
       p.style.transformOrigin = "top left";
       p.style.transform = sc === 1 ? "" : "scale(" + sc + ")";
       /* transform 不占布局空间：放大时用 margin 补出滚动区域，否则滚不到被放大的部分。
@@ -449,6 +478,16 @@
     const b = parent.getBoundingClientRect();
     const pl = parseFloat(pcs.borderLeftWidth) || 0;
     const pt = parseFloat(pcs.borderTopWidth) || 0;
+
+    /* 【混合文字容器不下手】
+       冻结会把块级子元素从文档流里抽走；容器里若还直接挂着文字节点
+       （典型：<span style="display:block">大数字</span> + "QoQ 会员活跃" <br> …），
+       那些文字就整体上移、被绝对定位的元素盖住（实测「+8.4%」叠在「QoQ 会员活跃」上）。
+       这类型容器里的元素本来也不会因为拖邻居而重排，跳过整棵子树反而更安全。 */
+    const hasOwnText = Array.from(parent.childNodes).some(
+      (n) => n.nodeType === 3 && n.nodeValue && n.nodeValue.trim()
+    );
+    if (hasOwnText) return 0;
 
     /* 【必须先读完所有兄弟的矩形，再下手】
        边读边设会把第一个子元素变绝对 → 后面的兄弟立刻上移，读到的坐标已经是错的
