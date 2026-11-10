@@ -63,8 +63,8 @@ try {
 
   /* ── 1. 拖动 ─────────────────────────────── */
   console.log("\n== 1. 拖动 ==");
-  // 用 data-eid 做稳定定位：元素被拖进 .free-layer 后 DOM 顺序会变，
-  // 用类名选择器会选中另一个同类块。
+  /* 用 data-eid 做稳定定位：元素的 DOM 位置在拖/撤销后会变，
+     用类名选择器会选中另一个同类块。 */
   const EID = await b.eval(api(`return d.querySelector('.slide .blk[data-drag]').dataset.eid;`));
   const TGT = '[data-eid="' + EID + '"]';
   console.log("目标元素:", TGT);
@@ -89,7 +89,10 @@ try {
   const gotY = (afterScreen.y - beforeScreen.y) / k;
   const expX = 100 / k, expY = 60 / k;
   console.log(`屏幕位移 (100,60) → 逻辑位移 (${gotX.toFixed(1)}, ${gotY.toFixed(1)})，期望 (${expX.toFixed(1)}, ${expY.toFixed(1)})`);
-  P(s1.free === "1" && /free-layer/.test(s1.parent), "拖动后脱离栅格进入 .free-layer");
+  /* v5.13 起拖动不再把元素搬进 .free-layer：元素留在原父节点里转成绝对定位。
+     重点验证「CSS 上下文不丢」——父节点不变，类名与选择器链全部保留。 */
+  P(s1.free === "1" && s1.pos === "absolute" && !/free-layer/.test(s1.parent),
+    "拖动后留在原父节点并转成绝对定位（父节点 = " + s1.parent + "）");
   P(Math.abs(gotX - expX) <= 7, `水平位移 ${gotX.toFixed(1)} ≈ 期望 ${expX.toFixed(1)}（±吸附 6px）`);
   P(Math.abs(gotY - expY) <= 7, `垂直位移 ${gotY.toFixed(1)} ≈ 期望 ${expY.toFixed(1)}`);
   P(!!s1.w && !!s1.h, "拖动时锁定了宽高（不变整行宽）");

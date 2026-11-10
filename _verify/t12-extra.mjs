@@ -45,7 +45,8 @@ try {
              inFree: !!el.closest('.free-layer') };
   `));
   console.log("封面拖动:", JSON.stringify(cover));
-  P(cover.free === "1" && cover.inFree, "h1 标题可拖动且进入自由层");
+  P(cover.free === "1" && !cover.inFree && !!cover.w,
+    "h1 标题可拖动、留在原父节点、宽高已锁定（v5.13 不再搬进自由层）");
   P(!!cover.w, "拖动时宽高已锁定");
 
   /* ── B. 吸附参考线 ───────────────────────────────────── */

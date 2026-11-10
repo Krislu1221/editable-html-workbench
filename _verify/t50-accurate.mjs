@@ -153,7 +153,19 @@ try {
   const junk = [/data-eid/, /data-ed-inject/, /__editable/, /data-ed-anchor/, /data-sel/, /__EDIT_FILE__/]
     .filter((re) => re.test(saved));
   P(junk.length === 0, "写回的文件没有编辑器残留" + (junk.length ? " 命中:" + junk.join(" ") : ""));  P(/transform:\s*scale\(/.test(saved) === false, "编辑期 scale 没有写进文件");
-  P(saved.includes("left: 300px") || saved.includes("left:300px"), "X=300 已落到文件里");
+  /* 页坐标 X=300 是面板口径；文件里存的是「父容器坐标系」的 left（与画布锁定的写法一致），
+     所以要比对「页坐标」而不是死瞅字面上的 300px。 */
+  const xWritten = await b.eval(api(`
+    const el=d.querySelector('[data-test-target]');
+    const s=d.querySelector('.slide');
+    const k=s.getBoundingClientRect().width/s.offsetWidth;
+    const sb=s.getBoundingClientRect(), eb=el.getBoundingClientRect();
+    return { pageX: Math.round((eb.left-sb.left)/k), inline: parseFloat(el.style.left)||0 };
+  `));
+  console.log("X 校对:", JSON.stringify(xWritten));
+  P(Math.abs(xWritten.pageX - 300) <= 1 &&
+    (saved.includes("left:" + xWritten.inline + "px") || saved.includes("left: " + xWritten.inline + "px")),
+    `X=300 已生效并落文件（页坐标 ${xWritten.pageX}，inline left:${xWritten.inline}px）`);
 
   /* ═════ B③ 紧接着再点一次保存 → 幂等 ═════ */
   const shaAfter1 = sha(saved);

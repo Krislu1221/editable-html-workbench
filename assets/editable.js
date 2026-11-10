@@ -182,9 +182,8 @@
         el.setAttribute("data-free", s[id].free);
         if (s[id].parentPath) el.setAttribute("data-eid-parent", s[id].parentPath);
         if (s[id].nextId) el.setAttribute("data-eid-next", s[id].nextId);
-        // 重做/恢复成自由定位：元素要真的回到 .free-layer（否则只挂属性、人还在流里 → 重做看不出变化）
-        const layer = freeLayer();
-        if (layer && el.parentElement !== layer) layer.appendChild(el);
+        /* 2026-11-10：拖动不再把元素搬进 .free-layer，撤销/重做也就不再搬回来。
+           旧文件里已经在层里的元素保持原样（它们的 parentPath 会把它放回去）。 */
       } else {
         // 从自由定位回到栅格：放回原父节点的原位置
         el.removeAttribute("data-free");
@@ -198,11 +197,14 @@
     updateSelectionBox();
   }
 
-  /* 把元素从 .free-layer 放回指定父节点的指定位置 */
+  /* 把元素从 .free-layer 放回指定父节点的指定位置
+     （2026-11-10 起拖动不再搬离原父节点，所以绝大多数情况这里是空操作；
+      保留是为了兼容旧版存下的文件——那些元素真被搬进了 .free-layer。） */
   function backToGrid(el, pp, nid) {
     const s = slide();
     const target = nodeByPath(pp) || (s && s.querySelector(".slide-body")) || s;
     if (!target) return;
+    if (el.parentElement === target) return;   // 已经在原位，别重排 DOM 顺序
     const ref = nid ? $(`[data-eid="${nid}"]`) : null;
     if (ref && ref !== el && ref.parentElement === target) target.insertBefore(el, ref);
     else target.appendChild(el);
@@ -233,9 +235,14 @@
 
   /* 画布锚点：优先 .slide（规范项目的页面骨架），
      否则找「页面型」容器（.page / .sheet / .board），
-     最后才退到 body 里第一个「可见且有尺寸」的块级元素。
+     最后才到 body 的直接子元素里挑「页面本体」。
      【坑】不能直接取 body 第一个子元素：常见做法是在 body 顶部放一个
-     0×0 的 SVG 图标精灵，取到它就会把缩放作用在空节点上，看起来就是「缩放无效」。 */
+     0×0 的 SVG 图标精灵，取到它就会把缩放作用在空节点上，看起来就是「缩放无效」。
+     【坑2·2026-11-10 实测】只有 40px 尺寸下限也不够：带 sticky/fixed 顶栏的普通站点，
+     第一个子元素就是那条 62px 的 .topbar → 画布选成顶栏，整页正文根本没被冻结，
+     于是拖动一个块会顶开邻居（原位置被挤占）、被拖的东西还挂到顶栏里导致跑位。
+     所以：① 顶栏（sticky/fixed）一律不算页面本体；
+              ② 正文容器只有一个 → 就是它；有多个平级块 → 直接用 body 当画布，整页冻结。 */
   let canvasAnchor = null;
   function pageLikes() {
     return [...document.querySelectorAll(".page, .sheet, .board")]
@@ -252,7 +259,15 @@
     if (!cand) {
       const kids = [...document.body.children].filter((n) =>
         ["SCRIPT", "STYLE", "LINK", "META", "NOSCRIPT", "TEMPLATE", "SVG"].indexOf(n.tagName) < 0);
-      cand = kids.find((n) => n.offsetWidth > 40 && n.offsetHeight > 40) || document.body;
+      const flow = kids.filter((n) => {
+        if (!n.offsetWidth || !n.offsetHeight) return false;
+        const cs = getComputedStyle(n);
+        return cs.position !== "fixed" && cs.position !== "sticky";
+      });
+      const big = flow.filter((n) => n.offsetWidth > 40 && n.offsetHeight > 40);
+      if (big.length === 1) cand = big[0];
+      else if (big.length > 1) cand = document.body;   // 多个平级正文块 → 整页当画布
+      else cand = flow.find((n) => n.offsetWidth > 40 && n.offsetHeight > 40) || document.body;
     }
     canvasAnchor = cand;
     cand.setAttribute("data-ed-anchor", "1");
@@ -393,17 +408,37 @@
     };
   }
 
-  /* 自由定位元素读 inline 值（避免旋转后 bounding box 变大导致框错位） */
+  /* 自由定位元素读 inline 值（避免旋转后 bounding box 变大导致框错位）。
+     【2026-11-10】自由定位元素现在**留在原来的父节点里**（不再搬进画布级的 .free-layer），
+     所以 inline 的 left/top 是「父容器坐标系」的，读回来必须补上父容器原点才是画布坐标。 */
   function boxRect(el) {
     if (el.getAttribute("data-free") === "1") {
+      const o = parentSpaceOrigin(el);
       return {
-        x: parseFloat(el.style.left) || 0,
-        y: parseFloat(el.style.top) || 0,
+        x: (parseFloat(el.style.left) || 0) + o.x,
+        y: (parseFloat(el.style.top) || 0) + o.y,
         w: parseFloat(el.style.width) || el.offsetWidth,
         h: parseFloat(el.style.height) || el.offsetHeight,
       };
     }
     return rectIn(el);
+  }
+
+  /* 父容器（= 绝对定位的包含块）padding box 左上角，在画布坐标系（未缩放 px）里的位置。
+     绝对定位的 left/top 相对包含块的 padding box，所以要补上父容器的边框宽度。 */
+  function parentSpaceOrigin(el) {
+    const s = slide();
+    const par = (el && el.parentElement) || s;
+    if (!s || !par) return { x: 0, y: 0 };
+    const k = state.scale || 1;
+    const sb = s.getBoundingClientRect();
+    const pb = par.getBoundingClientRect();
+    const cs = getComputedStyle(par);
+    const bl = parseFloat(cs.borderLeftWidth) || 0;
+    const bt = parseFloat(cs.borderTopWidth) || 0;
+    const dx = (pb.left - sb.left) / k + bl;
+    const dy = (pb.top - sb.top) / k + bt;
+    return { x: Math.abs(dx) < 0.5 ? 0 : dx, y: Math.abs(dy) < 0.5 ? 0 : dy };
   }
 
   /* ── 画布锁定（PPT 式编辑）──────────────────────────
@@ -500,7 +535,9 @@
       const cs = getComputedStyle(ch);
       if (cs.display === "none") return;
       if (!isBlockLevel(cs)) return;                       // inline / contents：不动
-      if (cs.position === "absolute" || cs.position === "fixed") {
+      /* sticky / fixed 的顶栏、浮动按钮：它们靠 position 才有意义，
+         冻成 absolute 就失去吸附效果（而且它们本来就不会被邻居顶动）。 */
+      if (cs.position === "absolute" || cs.position === "fixed" || cs.position === "sticky") {
         kids.push({ ch, already: true });
         return;
       }
@@ -586,24 +623,30 @@
     return l;
   }
 
-  /* 把元素转成自由定位（脱离栅格流），并记下原始栅格位置 */
+  /* 把元素转成自由定位（不再搬到画布级的 .free-layer——那会把元素踢出原来的 CSS 上下文：
+     `.now li` / `.rules li` 这类「父类名 + 子标签」选择器一旦失去祖先就全部失效，
+     元素会变成浏览器默认样式（实测：那条 li 从 flex 变成裸列表项）。
+     画布锁定之后所有块本来就已经是绝对定位，留在原地改 left/top 就够，
+     CSS 上下文一个字都不会丢，邻居也不会被顶开。 */
   function toFreeQuiet(el) {
     if (el.getAttribute("data-free") === "1") return;
-    const r = rectIn(el);
+    const r = rectIn(el);                       // 画布坐标（未缩放）
+    const o = parentSpaceOrigin(el);
+    if (!el.hasAttribute("data-eid-orig")) {
+      el.setAttribute("data-eid-orig",
+        [r2(r.x - o.x), r2(r.y - o.y), r2(r.w), r2(r.h)].join("|"));
+    }
     el.setAttribute("data-eid-parent", el.parentElement ? parentPath(el.parentElement) : "");
     el.setAttribute("data-eid-next",
       el.nextElementSibling && el.nextElementSibling.dataset ? (el.nextElementSibling.dataset.eid || "") : "");
 
-    const layer = freeLayer();
-    layer.appendChild(el);
     el.setAttribute("data-free", "1");
     el.style.position = "absolute";
-    el.style.left = r.x + "px";
-    el.style.top = r.y + "px";
-    el.style.width = r.w + "px";
-    el.style.height = r.h + "px";
+    el.style.left = r2(r.x - o.x) + "px";
+    el.style.top = r2(r.y - o.y) + "px";
+    el.style.width = r2(r.w) + "px";
+    el.style.height = r2(r.h) + "px";
     el.style.margin = "0";
-    el.style.pointerEvents = "auto";
     el.style.zIndex = stGet(el, "z-index") || "10";
     el.style.boxSizing = "border-box";
   }
@@ -801,6 +844,7 @@
       sx: ox === undefined ? ev.clientX : ox,
       sy: oy === undefined ? ev.clientY : oy,
       base: { x: r.x, y: r.y, w: r.w, h: r.h },
+      origin: parentSpaceOrigin(el),   // 画布坐标 → 父容器坐标的偏移
       targets: collectSnapTargets(el),
     };
     document.body.style.userSelect = "none";
@@ -814,6 +858,7 @@
       mode: "resize", dir, el,
       sx: ev.clientX, sy: ev.clientY,
       base: { x: r.x, y: r.y, w: r.w, h: r.h },
+      origin: parentSpaceOrigin(el),
       targets: collectSnapTargets(el),
     };
     document.body.style.userSelect = "none";
@@ -884,19 +929,21 @@
       const dx = (e.clientX - d.sx) / k, dy = (e.clientY - d.sy) / k;
       const vx = snapAxis(d.base.x + dx, d.base.w, d.targets.v, 6);
       const hy = snapAxis(d.base.y + dy, d.base.h, d.targets.h, 6);
-      d.el.style.left = vx.pos + "px";
-      d.el.style.top = hy.pos + "px";
+      const o = d.origin || { x: 0, y: 0 };
+      d.el.style.left = (vx.pos - o.x) + "px";
+      d.el.style.top = (hy.pos - o.y) + "px";
       showGuides(vx.line, hy.line);
     } else if (d.mode === "resize") {
       const dx = (e.clientX - d.sx) / k, dy = (e.clientY - d.sy) / k;
+      const o = d.origin || { x: 0, y: 0 };
       let x = d.base.x, y = d.base.y, w = d.base.w, h = d.base.h;
       if (d.dir.indexOf("e") >= 0) w = d.base.w + dx;
       if (d.dir.indexOf("s") >= 0) h = d.base.h + dy;
       if (d.dir.indexOf("w") >= 0) { x = d.base.x + dx; w = d.base.w - dx; }
       if (d.dir.indexOf("n") >= 0) { y = d.base.y + dy; h = d.base.h - dy; }
       w = Math.max(16, w); h = Math.max(12, h);
-      d.el.style.left = x + "px";
-      d.el.style.top = y + "px";
+      d.el.style.left = (x - o.x) + "px";
+      d.el.style.top = (y - o.y) + "px";
       d.el.style.width = w + "px";
       d.el.style.height = h + "px";
       showGuides(null, null);
@@ -936,8 +983,9 @@
 
   function moveBlockTo(el, nx, ny) {
     toFreeQuiet(el);                 // 在栅格里也允许，先脱流（和拖动行为一致）
-    el.style.left = Math.round(nx) + "px";
-    el.style.top = Math.round(ny) + "px";
+    const o = parentSpaceOrigin(el); // nx/ny 是画布坐标，写回要换成父容器坐标
+    el.style.left = Math.round(nx - o.x) + "px";
+    el.style.top = Math.round(ny - o.y) + "px";
     el.setAttribute("data-eid-st", el.getAttribute("style") || "");
     markDirty(); refresh(); updateSelectionBox();
   }
